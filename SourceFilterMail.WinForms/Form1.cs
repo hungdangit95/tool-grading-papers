@@ -79,14 +79,20 @@ public partial class Form1 : Form
 
             AppendLog($"?? d?c {mails.Count} mail.");
 
+            var geminiApiKey = ResolveGeminiApiKey();
+            if (string.IsNullOrWhiteSpace(geminiApiKey))
+            {
+                AppendLog("Khong tim thay Gemini API key. He thong se bo qua cham diem.");
+            }
             var entries = new List<ContestEntry>();
+            var scoredOneEligibleEssay = false;
             for (var i = 0; i < mails.Count; i++)
             {
                 var mail = mails[i];
                 AppendLog($"?ang ph?n t?ch mail {i + 1}/{mails.Count}: {mail.Subject}");
 
                 var attachmentText = await _attachmentTextService.BuildCombinedTextAsync(mail.SavedAttachmentPaths, AppendLog);
-                var entry = await _candidateInfoExtractor.ExtractAsync(mail, attachmentText, txtGemini.Text.Trim(), i + 1);
+                var entry = await _candidateInfoExtractor.ExtractAsync(mail, attachmentText, geminiApiKey, i + 1);
                 entry.SavedAttachmentPaths = string.Join(";", mail.SavedAttachmentPaths);
                 entry.AttachmentFolderPath = mail.AttachmentFolderPath;
 
@@ -94,8 +100,48 @@ public partial class Form1 : Form
                 entry.AnhVideo = media.DisplayText;
                 entry.AnhVideoHighlightZipRed = media.HighlightZipRed;
                 entry.AnhVideoHighlightGreen = media.HighlightMediaGreen;
-                entry.KhongHopLe = mail.SavedAttachmentPaths.Count == 0 ? "1" : string.Empty;
                 entry.SoLuongVaTenFile = AttachmentMediaAnalyzer.BuildInventorySummary(mail.SavedAttachmentPaths);
+                var eligibility = _attachmentMediaAnalyzer.AnalyzeScoringEligibility(mail.SavedAttachmentPaths);
+                if (!eligibility.IsEligible)
+                {
+                    entry.KhongHopLe = "1";
+                    entry.Diem = string.Empty;
+                    entry.LyDoChiTiet = eligibility.Reason;
+                }
+                else
+                {
+                    entry.KhongHopLe = string.Empty;
+                    if (string.IsNullOrWhiteSpace(geminiApiKey))
+                    {
+                        entry.Diem = string.Empty;
+                        entry.LyDoChiTiet = "Du dieu kien cham nhung thieu Gemini API key nen chua cham duoc.";
+                        entries.Add(entry);
+                        continue;
+                    }
+
+                    if (scoredOneEligibleEssay)
+                    {
+                        entry.Diem = string.Empty;
+                        entry.LyDoChiTiet = "Tam thoi bo qua cham bai hop le nay de tranh rate limit 429 (che do test: chi cham 1 bai hop le).";
+                        entries.Add(entry);
+                        continue;
+                    }
+
+                    var scoring = await _candidateInfoExtractor.ScoreEssayAsync(attachmentText, geminiApiKey);
+                    AppendLog($"Gemini API log ({entry.ContestCode}): {scoring.ApiLog}");
+                    entry.Diem = scoring.ScoreText;
+                    entry.LyDoChiTiet = string.IsNullOrWhiteSpace(scoring.DetailText)
+                        ? eligibility.Reason
+                        : $"{scoring.DetailText}{Environment.NewLine}{Environment.NewLine}--- Gemini API ---{Environment.NewLine}{scoring.ApiLog}";
+                    if (entry.Diem.StartsWith("Khong hop le", StringComparison.OrdinalIgnoreCase))
+                    {
+                        entry.KhongHopLe = "1";
+                    }
+                    else if (!entry.Diem.StartsWith("Chua cham duoc", StringComparison.OrdinalIgnoreCase))
+                    {
+                        scoredOneEligibleEssay = true;
+                    }
+                }
 
                 entries.Add(entry);
             }
@@ -136,5 +182,39 @@ public partial class Form1 : Form
         }
 
         txtLog.AppendText($"[{DateTime.Now:HH:mm:ss}] {message}{Environment.NewLine}");
+    }
+
+    private string ResolveGeminiApiKey()
+    {
+        var key = txtGemini.Text.Trim();
+        if (!string.IsNullOrWhiteSpace(key))
+        {
+            return key;
+        }
+
+        var candidatePaths = new[]
+        {
+            Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "key.txt"),
+            Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "key.txt"),
+            Path.Combine(AppContext.BaseDirectory, "key.txt"),
+            Path.Combine(Directory.GetCurrentDirectory(), "key.txt"),
+        };
+
+        foreach (var candidatePath in candidatePaths)
+        {
+            var fullPath = Path.GetFullPath(candidatePath);
+            if (!File.Exists(fullPath))
+            {
+                continue;
+            }
+
+            var fileKey = File.ReadAllText(fullPath).Trim();
+            if (!string.IsNullOrWhiteSpace(fileKey))
+            {
+                return fileKey;
+            }
+        }
+
+        return string.Empty;
     }
 }

@@ -31,5 +31,11 @@ public sealed class ContestEntry
 
     /// <summary>Invalid row: no attachment files — export "1" and yellow highlight.</summary>
     public string KhongHopLe { get; set; } = string.Empty;
+
+    /// <summary>Điểm chi tiết theo rubric chấm sơ loại.</summary>
+    public string Diem { get; set; } = string.Empty;
+
+    /// <summary>Lý do/nhận xét chi tiết cho kết quả chấm.</summary>
+    public string LyDoChiTiet { get; set; } = string.Empty;
 }
 

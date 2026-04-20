@@ -22,6 +22,8 @@ public sealed class ExcelExporter
         sheet.Cell(1, 10).Value = "ảnh/video/ghi âm";
         sheet.Cell(1, 11).Value = "Số lượng file và tên file";
         sheet.Cell(1, 12).Value = "không hợp lệ";
+        sheet.Cell(1, 13).Value = "Điểm";
+        sheet.Cell(1, 14).Value = "Lý do chi tiết";
 
         var rowIndex = 2;
         foreach (var row in rows)
@@ -65,12 +67,19 @@ public sealed class ExcelExporter
                 sheet.Row(rowIndex).Style.Fill.BackgroundColor = XLColor.Yellow;
             }
 
+            sheet.Cell(rowIndex, 13).Value = row.Diem;
+            sheet.Cell(rowIndex, 14).Value = row.LyDoChiTiet;
+
             rowIndex++;
         }
 
         sheet.Columns().AdjustToContents();
         sheet.Column(11).Style.Alignment.WrapText = true;
         sheet.Column(11).Width = 56;
+        sheet.Column(13).Style.Alignment.WrapText = true;
+        sheet.Column(13).Width = 70;
+        sheet.Column(14).Style.Alignment.WrapText = true;
+        sheet.Column(14).Width = 90;
         workbook.SaveAs(outputFilePath);
 
         return Task.CompletedTask;

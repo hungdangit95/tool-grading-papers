@@ -10,6 +10,9 @@ namespace SourceFilterMail.WinForms.Services;
 /// </summary>
 public sealed class AttachmentMediaAnalyzer
 {
+    private static readonly HashSet<string> EssayExtensions =
+        new(StringComparer.OrdinalIgnoreCase) { ".docx", ".pdf" };
+
     private static readonly HashSet<string> ImageExtensions =
         new(StringComparer.OrdinalIgnoreCase) { ".jpg", ".jpeg", ".png", ".jng" };
 
@@ -142,6 +145,82 @@ public sealed class AttachmentMediaAnalyzer
         }
 
         return new MediaAnalysis(display, highlightZipRed, highlightMediaGreen);
+    }
+
+    public ScoringEligibility AnalyzeScoringEligibility(IEnumerable<string> attachmentPaths)
+    {
+        var paths = attachmentPaths.Where(p => !string.IsNullOrWhiteSpace(p) && File.Exists(p)).ToList();
+        if (paths.Count == 0)
+        {
+            return new ScoringEligibility(false, false, false, "Khong co file dinh kem.");
+        }
+
+        var hasEssayFile = false;
+        var hasImage = false;
+        var hasVideo = false;
+        var hasUnreadableArchive = false;
+
+        foreach (var path in paths)
+        {
+            var ext = Path.GetExtension(path);
+            if (EssayExtensions.Contains(ext))
+            {
+                hasEssayFile = true;
+                continue;
+            }
+
+            if (ImageExtensions.Contains(ext))
+            {
+                hasImage = true;
+                continue;
+            }
+
+            if (string.Equals(ext, VideoExtension, StringComparison.OrdinalIgnoreCase))
+            {
+                hasVideo = true;
+                continue;
+            }
+
+            if (string.Equals(ext, ".zip", StringComparison.OrdinalIgnoreCase))
+            {
+                var inner = ScanZipEligibility(path);
+                hasEssayFile |= inner.HasEssayFile;
+                hasImage |= inner.HasImage;
+                hasVideo |= inner.HasVideo;
+                if (!inner.WasReadable)
+                {
+                    hasUnreadableArchive = true;
+                }
+            }
+            else if (string.Equals(ext, ".rar", StringComparison.OrdinalIgnoreCase))
+            {
+                var inner = ScanRarEligibility(path);
+                hasEssayFile |= inner.HasEssayFile;
+                hasImage |= inner.HasImage;
+                hasVideo |= inner.HasVideo;
+                if (!inner.WasReadable)
+                {
+                    hasUnreadableArchive = true;
+                }
+            }
+        }
+
+        if (hasVideo)
+        {
+            return new ScoringEligibility(false, hasEssayFile, hasImage, "Co file video, he thong hien khong ho tro cham video.");
+        }
+
+        if (!hasEssayFile)
+        {
+            return new ScoringEligibility(false, false, hasImage, "Khong co file bai viet .docx hoac .pdf de cham.");
+        }
+
+        if (hasUnreadableArchive)
+        {
+            return new ScoringEligibility(false, true, hasImage, "Co file nen khong doc duoc, can gui lai file ro rang.");
+        }
+
+        return new ScoringEligibility(true, true, hasImage, "Du dieu kien cham: co file .docx/.pdf va khong co video.");
     }
 
     /// <summary>
@@ -349,4 +428,59 @@ public sealed class AttachmentMediaAnalyzer
     }
 
     public readonly record struct MediaAnalysis(string DisplayText, bool HighlightZipRed, bool HighlightMediaGreen);
+
+    private static (bool WasReadable, bool HasEssayFile, bool HasImage, bool HasVideo) ScanZipEligibility(string path)
+    {
+        try
+        {
+            using var zip = ZipFile.OpenRead(path);
+            var hasEssayFile = false;
+            var hasImage = false;
+            var hasVideo = false;
+            foreach (var entry in zip.Entries)
+            {
+                if (string.IsNullOrEmpty(entry.Name))
+                {
+                    continue;
+                }
+
+                var innerExt = Path.GetExtension(entry.FullName);
+                hasEssayFile |= EssayExtensions.Contains(innerExt);
+                hasImage |= ImageExtensions.Contains(innerExt);
+                hasVideo |= string.Equals(innerExt, VideoExtension, StringComparison.OrdinalIgnoreCase);
+            }
+
+            return (true, hasEssayFile, hasImage, hasVideo);
+        }
+        catch
+        {
+            return (false, false, false, false);
+        }
+    }
+
+    private static (bool WasReadable, bool HasEssayFile, bool HasImage, bool HasVideo) ScanRarEligibility(string path)
+    {
+        try
+        {
+            using var archive = ArchiveFactory.OpenArchive(path);
+            var hasEssayFile = false;
+            var hasImage = false;
+            var hasVideo = false;
+            foreach (var entry in archive.Entries.Where(e => !e.IsDirectory))
+            {
+                var innerExt = Path.GetExtension(entry.Key ?? string.Empty);
+                hasEssayFile |= EssayExtensions.Contains(innerExt);
+                hasImage |= ImageExtensions.Contains(innerExt);
+                hasVideo |= string.Equals(innerExt, VideoExtension, StringComparison.OrdinalIgnoreCase);
+            }
+
+            return (true, hasEssayFile, hasImage, hasVideo);
+        }
+        catch
+        {
+            return (false, false, false, false);
+        }
+    }
+
+    public readonly record struct ScoringEligibility(bool IsEligible, bool HasEssayFile, bool HasImage, string Reason);
 }
